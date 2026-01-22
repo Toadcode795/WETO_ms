@@ -1,0 +1,679 @@
+---
+title: "Isolation-by-distance"
+author: "Jayna Bergman"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Version of R used: `r getRversion()`
+<br> 
+
+## Project
+
+Western toad DUs Genomics. 
+<br> 
+<br>
+
+
+## Overview
+
+### **Goal(s):** 
+The goal of this script is to test for isolation-by-distance. It will 1) calculate pairwise genetic distances (using Nei's distance) and 2) pairwise geographic distances, and then carryout a Mantel test.
+  
+The first section includes all individuals (after removing multiple from each site). Second section removes the "southern" group individuals, and the third color codes for the "southern" group.
+<br>
+
+### **Details about files and pipeline:** 
+
+vcf file: HO_0.5_AB_0.25-0.75_mac3_imiss33_SNP95_LD.recode.vcf
+
+<br>
+
+## Setting up the R environment
+
+### Working directory: 
+
+```{r, message =FALSE}
+setwd("C:/Users/jayna/OneDrive/Desktop/School/Lee_Yaw_Lab/Masters_Thesis/Data_chapter/RMD")
+```
+
+### Libraries: 
+
+```{r, message=FALSE}
+# load libraries
+library(dplyr)
+library(knitr)
+library(ggplot2)
+library(tidyverse)
+library(tidyr)
+library(vcfR)
+library(adegenet)
+library(poppr)
+library(hierfstat)
+library(ape)
+library(ade4)
+library(dartR)
+library(geosphere)
+```
+
+## **Step 1 of analysis:** VCF File
+
+### Load and explore the data
+
+Load the vcf file and it will be converted into a genlight object:
+
+```{r}
+vcf <- gl.read.vcf("./filtered_vcf/HO_0.5_AB_0.25-0.75_mac3_imiss33_SNP95_LD.recode.vcf")
+```
+
+Look at the summary of the genlight object:
+```{r}
+vcf
+```
+
+Add meta data to the genlight object:
+```{r}
+## Clean individual names (remove excess text)
+samples <- indNames(vcf)
+new_names <- sub(".WETO_ref.sort*", "", samples)
+
+indNames(vcf) <- new_names
+indNames(vcf)
+
+
+## Drop individuals to get one per site
+gl_filtered <- gl.drop.ind(vcf, ind.list=c("RA-05-DNA80","WETO22-022-DNA80", "WETO23-065-DNA80", "WETO23-060-DNA80", "WETO23-061-DNA80", "WETO23-062-DNA80"))
+
+indNames(gl_filtered)
+
+
+## Read in population data and add it to the genlight object
+pops <- read.csv("C:/Users/jayna/OneDrive/Desktop/School/Lee_Yaw_Lab/Masters_Thesis/Data_chapter/plate2_individuals.csv")
+
+## reorder samples in alphabetical order so downstream analyses match
+pops <- pops[order(pops$Sample), ]
+
+
+## Distinct to ensure one individual per population
+pops_subset <- pops %>%
+  subset(pops$imiss20_SNP96=="yes") %>%
+  distinct(Long_dd, Lat_dd, .keep_all = TRUE)
+
+## For the gl object
+coords <- pops_subset %>%
+  select(c("Lat_dd","Long_dd")) %>%
+  rename(lat = "Lat_dd", lon ="Long_dd") 
+
+
+## For geographic distance maxtrix
+coords2 <- pops_subset %>%
+  select(c("Long_dd", "Lat_dd")) %>%
+  rename(lon = "Long_dd", lat = "Lat_dd")
+
+## Add coordinates to the gl object
+gl_filtered@other$latlon <- coords
+
+## setting populations to individual samples 
+## Allows pairwise comparisons between individuals for IBD
+pop(gl_filtered) <- pops_subset$Sample
+pop(gl_filtered)
+
+```
+
+
+Generate genetic distance matrix and geographic distance matrix to run a mantel test to determine IBD using all individuals
+```{r}
+## Genetic distance
+#dist <- gl.dist.pop(gl_filtered, plot.out=TRUE, method = "nei")
+#dist <- as.matrix(dist)
+
+## Genlight obj to genind object (in order to calculated proportion of shared alleles)
+gi_filtered <- gl2gi(gl_filtered)
+
+
+## Genetic distance matrix using the proportion of shared alleles
+dist <- propShared(gi_filtered)
+
+
+## Geographic distance matrix
+geogDist <- distm(coords2)
+
+## Convert distances to km (from m)
+geogDist <- geogDist / 1000
+
+## Add back column/row names to geog distance matrix
+rownames(geogDist) <- pops_subset$Sample
+colnames(geogDist) <- pops_subset$Sample
+
+
+
+## calculate IBD using a mantel test. Need the transformation on the genetic distance because we need it to be 1 - proportion shared alleles for the Mantel test to calculate properly.
+ibd <- gl.ibd(Dgen=dist, Dgeo=geogDist, Dgen_trans = '1 - Dgen', permutations = 9999)
+```
+
+
+IBD for the Calling population:
+```{r}
+## set the populations to calling and non-calling
+pop(gl_filtered) <- pops_subset$Genetic_clade
+pop(gl_filtered)
+
+## Filter for calling individuals
+calling_gl <- gl.keep.pop(gl_filtered, "Calling")
+
+## change back to individual names
+pop(calling_gl) <- indNames(calling_gl)
+pop(calling_gl)
+
+
+## Genetic distance
+#dist_calling <- gl.dist.pop(calling_gl, plot.out=TRUE, method = "nei")
+#dist_calling <- as.matrix(dist_calling)
+
+## Convert to a gen ind oject
+calling_gi <- gl2gi(calling_gl)
+
+## genetic distance using proportion of shared alleles
+dist_calling <- propShared(calling_gi)
+
+dist_calling <- as.dist(dist_calling)
+
+
+## Geographic distance - subset the population data
+coords_calling <- pops_subset %>%
+  subset(Genetic_clade == "Calling") %>%
+    select(c("Long_dd", "Lat_dd")) %>%
+  rename(lon = "Long_dd", lat = "Lat_dd")
+  
+geogDist_calling <- distm(coords_calling)
+
+## Genetic distance from m to km
+geogDist_calling <- geogDist_calling / 1000
+
+geogDist_calling <- as.dist(geogDist_calling)
+
+
+## IBD
+ibd_calling <- gl.ibd(Dgen=dist_calling, Dgeo=geogDist_calling, Dgen_trans = '1 - Dgen', permutations = 9999)
+```
+
+IBD for the Non-calling population:
+```{r}
+## filter for the Non-calling pop
+noncalling_gl <- gl.keep.pop(gl_filtered, "Non-calling")
+
+pop(noncalling_gl) <- indNames(noncalling_gl)
+pop(noncalling_gl)
+
+
+## Genetic distance
+#dist_noncalling <- gl.dist.pop(noncalling_gl, plot.out=TRUE, method = "nei")
+#dist_noncalling <- as.matrix(dist_noncalling)
+
+## Convert to a gen ind oject
+noncalling_gi <- gl2gi(noncalling_gl)
+
+## genetic distance using proportion of shared alleles
+dist_noncalling <- propShared(noncalling_gi)
+
+
+## Geographic distance
+coords_noncalling <- pops_subset %>%
+  subset(Genetic_clade == "Non-calling") %>%
+    select(c("Long_dd", "Lat_dd")) %>%
+  rename(lon = "Long_dd", lat = "Lat_dd")
+  
+geogDist_noncalling <- distm(coords_noncalling)
+
+## Convert geographic distance from m to km
+geogDist_noncalling <- geogDist_noncalling / 1000
+
+
+## IBD
+ibd_noncalling <- gl.ibd(Dgen=dist_noncalling, Dgeo=geogDist_noncalling, Dgen_trans = '1 - Dgen', permutations = 9999)
+```
+
+
+Generate dataframe for plot using all individuals:
+```{r}
+## Generate long format dataframe for genetic distances
+dist_df <- as.data.frame(dist) 
+rownames(dist_df) <- pops_subset$Sample
+colnames(dist_df) <- pops_subset$Sample
+
+dist_long <- dist_df %>%
+  rownames_to_column(var = "Individual_1") %>%
+  pivot_longer(cols = -Individual_1,
+               names_to = "Individual_2",
+               values_to = "Gen_dist")
+
+
+## Generate long format dataframe for geographic distances
+geogDist_df <- as.data.frame(geogDist)
+
+
+geogdist_long <- geogDist_df %>%
+  rownames_to_column(var = "Individual_1") %>%
+  pivot_longer(cols = -Individual_1,
+               names_to = "Individual_2",
+               values_to = "Geog_dist")
+
+All_ind_df <- cbind(dist_long, geogdist_long$Geog_dist)
+
+All_ind_df <- All_ind_df %>%
+  rename("Geog_dist" = "geogdist_long$Geog_dist")
+
+
+
+## subset to sample and genetic clade 
+genetic_clades <- pops_subset %>%
+  select(Sample, Genetic_clade)
+
+
+## add columns for individual 1 and 2 
+All_ind_df <- All_ind_df %>%
+  left_join(genetic_clades, by=c("Individual_1" = "Sample")) %>%
+  rename("Ind1_gen_clade" = Genetic_clade) %>%
+  left_join(genetic_clades, by=c("Individual_2" = "Sample")) %>%
+  rename("Ind2_gen_clade" = Genetic_clade)
+
+
+## Add Type of comparison column (depending on genetic clade of ind 1 and ind 2)
+All_ind_df <- All_ind_df %>%
+  mutate(Type = case_when(
+    Ind1_gen_clade == "Calling" & Ind2_gen_clade == "Calling" ~ "Calling vs Calling",
+    Ind1_gen_clade == "Non-calling" & Ind2_gen_clade == "Non-calling" ~ "Non-calling vs Non-calling",
+    TRUE ~ "Calling vs Non-calling"
+  ))
+
+
+## Remove zeros (i.e. comparisons of the same site)
+All_ind_data <- All_ind_df[!(All_ind_df$Geog_dist==0.0 &
+                               All_ind_df$Gen_dist == 1.00000000), ]
+
+write.csv(All_ind_data, "C:/Users/jayna/OneDrive/Desktop/School/Lee_Yaw_Lab/Masters_Thesis/Data_chapter/RMD/IBD/Proportion_shared_alleles/All_ind_IBD_matrix_PropSA.csv", row.names=FALSE)
+All_ind_data <- read.csv("C:/Users/jayna/OneDrive/Desktop/School/Lee_Yaw_Lab/Masters_Thesis/Data_chapter/RMD/IBD/Proportion_shared_alleles/All_ind_IBD_matrix_PropSA.csv")
+```
+
+
+
+
+```{r}
+## plot
+ibd_plot <- ggplot(All_ind_data, aes(x=Geog_dist, y=1 - Gen_dist, color = Type)) +
+  geom_point(size=1.8) +
+  scale_x_continuous(expand=c(0,0), limits=c(0, 1400), breaks=seq(0, 1400, by= 200)) +
+  scale_color_manual(values = c("Calling vs Non-calling"= "#CAB2D6", "Calling vs Calling" = "#FDBF6F", "Non-calling vs Non-calling"= "#A6CEE3")) +
+  geom_abline(slope=0.00014, intercept=0.16, color = "black", lwd=0.75) +
+  #geom_abline(slope=0.00043, intercept = 0.057, color = "#FF7F00", lwd=0.75) +
+  #geom_abline(slope =7.2e-05, intercept=0.15, color = "#1F78B4", lwd=0.75) +
+  geom_smooth(data = All_ind_data[All_ind_data$Type == "Calling vs Non-calling", ], method = "lm", se = FALSE, color = "#6A3D9A", lwd=0.75,
+              linetype="dashed") +
+  geom_smooth(data = All_ind_data[All_ind_data$Type == "Calling vs Calling", ], method = "lm", se = FALSE, color = "#FF7F00", lwd=0.75, 
+              linetype="dashed") +
+  geom_smooth(data = All_ind_data[All_ind_data$Type == "Non-calling vs Non-calling", ], method = "lm", se = FALSE, color = "#1F78B4", lwd=0.75, 
+              linetype="dashed") +
+  theme(legend.text = element_text(size = 11),
+        axis.line = element_line(color="black"),
+        panel.background=element_rect(fill="white", color=NA),
+        axis.text.x = element_text(size=11),
+        axis.text.y = element_text(size= 11),
+        axis.title.x = element_text(margin=margin(t=17), size = 14),
+        axis.title.y = element_text (margin=margin(r=10), size=14)) +
+  labs(x="Geographic Distance (km)",
+       y="1 - Proportion of shared alleles")
+
+ibd_plot
+
+ggsave(plot=ibd_plot, "C:/Users/jayna/OneDrive/Desktop/School/Lee_Yaw_Lab/Masters_Thesis/Data_chapter/RMD/IBD/Proportion_shared_alleles/IBD_all_individuals_imiss33_SNP95.jpeg", dpi=800, width=8, height=8)
+```
+
+### Without "Southern cluster"
+
+The cluster of "Calling" individuals that have genetic distances between 0.2 and 0.3 are the "third cluster" corresponding to WLNP and Corbin. Due to only having three individuals/sites for this cluster and we suspect that they are likely related to a cluster in the USA. We will remove them and rerun IBD for the calling population.
+
+```{r}
+## Remove individuals that correspond to the southern group
+gl_filtered_wo_WLNP <- gl.drop.ind(gl_filtered, ind.list=c("WETO20-003-DNA80", "WETO23-077-DNA80", "WETO23-089-DNA80"))
+
+
+## Remove individuals from pops dataframe
+pops_subset_wo_WLNP <- pops_subset %>%
+  filter(!(Sample=="WETO20-003" | Sample=="WETO23-077" | Sample=="WETO23-089"))
+
+
+## separate coords for geographic distance matrix
+coords_wo_WLNP <- pops_subset_wo_WLNP %>%
+  select(c("Long_dd", "Lat_dd")) %>%
+  rename(lon = "Long_dd", lat = "Lat_dd")
+
+
+## setting populations to individual samples 
+## Allows pairwise comparisons between individuals for IBD
+pop(gl_filtered_wo_WLNP) <- pops_subset_wo_WLNP$Sample
+pop(gl_filtered_wo_WLNP)
+```
+
+Generate genetic distance matrix and geographic distance matrix to run a mantel test to determine IBD using all individuals
+```{r}
+## Genetic distance
+#dist_wo_WLNP <- gl.dist.pop(gl_filtered_wo_WLNP, plot.out=TRUE, method = "nei")
+#dist_wo_WLNP <- as.matrix(dist_wo_WLNP)
+
+## Convert to a gen ind oject
+gi_filtered_wo_WLNP <- gl2gi(gl_filtered_wo_WLNP)
+
+## genetic distance using proportion of shared alleles
+dist_wo_WLNP <- propShared(gi_filtered_wo_WLNP)
+
+
+## Geographic distance
+geogDist_wo_WLNP <- distm(coords_wo_WLNP)
+geogDist_wo_WLNP <- geogDist_wo_WLNP / 1000
+
+## Add back column/row names
+rownames(geogDist_wo_WLNP) <- pops_subset_wo_WLNP$Sample
+colnames(geogDist_wo_WLNP) <- pops_subset_wo_WLNP$Sample
+
+## Run IBD analysis
+ibd_wo_WLNP <- gl.ibd(Dgen=dist_wo_WLNP, Dgeo=geogDist_wo_WLNP, Dgen_trans = '1-Dgen', permutations = 9999)
+```
+
+IBD for the Calling population (without WLNP):
+```{r}
+## Calling pop
+pop(gl_filtered_wo_WLNP) <- pops_subset_wo_WLNP$Genetic_clade
+pop(gl_filtered_wo_WLNP)
+
+calling_gl_wo_WLNP <- gl.keep.pop(gl_filtered_wo_WLNP, "Calling")
+
+pop(calling_gl_wo_WLNP) <- indNames(calling_gl_wo_WLNP)
+pop(calling_gl_wo_WLNP)
+
+
+## Genetic distance
+#dist_calling_wo_WLNP <- gl.dist.pop(calling_gl_wo_WLNP, plot.out=TRUE, method = "nei")
+#dist_calling_wo_WLNP <- as.matrix(dist_calling_wo_WLNP)
+
+## Convert to a gen ind oject
+calling_gi_wo_WLNP <- gl2gi(calling_gl_wo_WLNP)
+
+## genetic distance using proportion of shared alleles
+dist_calling_wo_WLNP <- propShared(calling_gi_wo_WLNP)
+
+
+## Geographic distance
+coords_calling_wo_WLNP <- pops_subset_wo_WLNP %>%
+  subset(Genetic_clade == "Calling") %>%
+    select(c("Long_dd", "Lat_dd")) %>%
+  rename(lon = "Long_dd", lat = "Lat_dd")
+  
+geogDist_calling_wo_WLNP <- distm(coords_calling_wo_WLNP)
+
+geogDist_calling_wo_WLNP <- geogDist_calling_wo_WLNP / 1000
+
+## IBD
+ibd_calling_wo_WLNP <- gl.ibd(Dgen=dist_calling_wo_WLNP, Dgeo=geogDist_calling_wo_WLNP, Dgen_trans = '1-Dgen', permutations = 9999)
+```
+
+Generate dataframe for plot using all individuals (without WLNP):
+```{r}
+## Generate long format dataframe for genetic distances
+dist_df_wo_WLNP <- as.data.frame(dist_wo_WLNP) 
+rownames(dist_df_wo_WLNP) <- pops_subset_wo_WLNP$Sample
+colnames(dist_df_wo_WLNP) <- pops_subset_wo_WLNP$Sample
+
+
+dist_df_wo_WLNP_lower <- dist_df_wo_WLNP
+dist_df_wo_WLNP_lower[!lower.tri(as.matrix(dist_df_wo_WLNP))] <- NA
+
+
+dist_long_wo_WLNP <- dist_df_wo_WLNP_lower %>%
+  rownames_to_column(var = "Individual_1") %>%
+  pivot_longer(cols = -Individual_1,
+               names_to = "Individual_2",
+               values_to = "Gen_dist")
+
+dist_long_wo_WLNP <- na.omit(dist_long_wo_WLNP)
+
+
+## Generate long format dataframe for geographic distances
+geogDist_df_wo_WLNP <- as.data.frame(geogDist_wo_WLNP)
+
+geogDist_df_wo_WLNP_lower <- geogDist_df_wo_WLNP
+geogDist_df_wo_WLNP_lower[!lower.tri(as.matrix(geogDist_df_wo_WLNP))] <- NA
+
+geogdist_long_wo_WLNP <- geogDist_df_wo_WLNP_lower %>%
+  rownames_to_column(var = "Individual_1") %>%
+  pivot_longer(cols = -Individual_1,
+               names_to = "Individual_2",
+               values_to = "Geog_dist")
+
+geogdist_long_wo_WLNP <- na.omit(geogdist_long_wo_WLNP)
+
+
+All_ind_df_wo_WLNP <- cbind(dist_long_wo_WLNP, geogdist_long_wo_WLNP$Geog_dist)
+
+
+All_ind_df_wo_WLNP <- All_ind_df_wo_WLNP %>%
+  rename("Geog_dist" = "geogdist_long_wo_WLNP$Geog_dist")
+
+
+## Add calling and non-calling labels to 
+genetic_clades_wo_WLNP <- pops_subset_wo_WLNP %>%
+  select(Sample, Genetic_clade)
+
+All_ind_df_wo_WLNP <- All_ind_df_wo_WLNP %>%
+  left_join(genetic_clades_wo_WLNP, by=c("Individual_1" = "Sample")) %>%
+  rename("Ind1_gen_clade" = Genetic_clade) %>%
+  left_join(genetic_clades_wo_WLNP, by=c("Individual_2" = "Sample")) %>%
+  rename("Ind2_gen_clade" = Genetic_clade)
+
+
+## Add Type column
+All_ind_df_wo_WLNP <- All_ind_df_wo_WLNP %>%
+  mutate(Type = case_when(
+    Ind1_gen_clade == "Calling" & Ind2_gen_clade == "Calling" ~ "Calling vs Calling",
+    Ind1_gen_clade == "Non-calling" & Ind2_gen_clade == "Non-calling" ~ "Non-calling vs Non-calling",
+    TRUE ~ "Calling vs Non-calling"
+  ))
+
+
+
+write.csv(All_ind_df_wo_WLNP, "C:/Users/jayna/OneDrive/Desktop/School/Lee_Yaw_Lab/Masters_Thesis/Data_chapter/RMD/IBD/Proportion_shared_alleles/All_ind_IBD_matrix_wo_WLNP_PropSA.csv", row.names=FALSE)
+All_ind_df_wo_WLNP <- read.csv("C:/Users/jayna/OneDrive/Desktop/School/Lee_Yaw_Lab/Masters_Thesis/Data_chapter/RMD/IBD/Proportion_shared_alleles/All_ind_IBD_matrix_wo_WLNP_PropSA.csv")
+```
+
+Make a new plot:
+```{r}
+## plot
+ibd_plot_wo_WLNP <- ggplot(All_ind_df_wo_WLNP, aes(x=Geog_dist, y=1 - Gen_dist, color = Type)) +
+  geom_point(size=1.8) +
+  scale_x_continuous(expand=c(0,0), limits=c(0, 1400), breaks=seq(0, 1400, by= 200)) +
+  scale_color_manual(values = c("Calling vs Non-calling"= "#CAB2D6", "Calling vs Calling" = "#FDBF6F", "Non-calling vs Non-calling"= "#A6CEE3")) +
+  
+  geom_abline(slope=0.00015, intercept=0.15, color = "black", lwd=0.75) +
+  
+  #geom_abline(slope=8.3e-05, intercept = 0.086, color = "#FF7F00", lwd=0.75, linetype="dashed") +
+  #geom_abline(slope =7.7e-05, intercept=0.15, color = "#1F78B4", lwd=0.75, linetype="dashed") +
+  
+  geom_smooth(data = All_ind_df_wo_WLNP[All_ind_df_wo_WLNP$Type == "Calling vs Non-calling", ], method = "lm", se = FALSE, color = "#6A3D9A", lwd=0.75, linetype = "dashed") +
+  geom_smooth(data = All_ind_df_wo_WLNP[All_ind_df_wo_WLNP$Type == "Calling vs Calling", ], method = "lm", se = FALSE, color = "#FF7F00", lwd=0.75, linetype = "dashed") +
+  geom_smooth(data = All_ind_df_wo_WLNP[All_ind_df_wo_WLNP$Type == "Non-calling vs Non-calling", ], method = "lm", se = FALSE, color = "#1F78B4", lwd=0.75, linetype = "dashed") +
+  
+  theme(legend.text = element_text(size = 14),
+        legend.title = element_text(size = 14),
+        axis.line = element_line(color="black"),
+        panel.background=element_rect(fill="white", color=NA),
+        axis.text.x = element_text(size=11),
+        axis.text.y = element_text(size= 11),
+        axis.title.x = element_text(margin=margin(t=17), size = 14),
+        axis.title.y = element_text (margin=margin(r=10), size=14)) +
+  labs(x="Geographic Distance (km)",
+       y="Genetic Distance 
+       (1 - Proportion shared alleles)")
+
+ibd_plot_wo_WLNP
+
+ggsave(plot=ibd_plot_wo_WLNP, "C:/Users/jayna/OneDrive/Desktop/School/Lee_Yaw_Lab/Masters_Thesis/Data_chapter/RMD/IBD/Proportion_shared_alleles/IBD_all_individuals_wo_WLNP.jpeg", dpi=800, width=8, height=8)
+```
+
+### With "Southern cluster" colored separate
+
+Run IBD for the "Southern cluster"
+
+```{r}
+pop(gl_filtered) <- pops_subset$Three_clusters
+
+## Southern population
+southern_gl <- gl.keep.pop(gl_filtered, "CotC")
+
+pop(southern_gl) <- indNames(southern_gl)
+pop(southern_gl)
+
+
+## Genetic distance
+#dist_southern <- gl.dist.pop(southern_gl, plot.out=TRUE, method = "nei")
+#dist_southern <- as.matrix(dist_southern)
+
+## Convert to a gen ind oject
+southern_gi <- gl2gi(southern_gl)
+
+## genetic distance using proportion of shared alleles
+dist_southern <- propShared(southern_gi)
+
+
+## Geographic distance
+coords_southern <- pops_subset %>%
+  subset(Three_clusters == "CotC") %>%
+    select(c("Long_dd", "Lat_dd")) %>%
+  rename(lon = "Long_dd", lat = "Lat_dd")
+  
+geogDist_southern <- distm(coords_southern)
+
+geogDist_southern <- geogDist_southern / 1000
+
+
+## IBD
+ibd_southern <- gl.ibd(Dgen=dist_southern, Dgeo=geogDist_southern, Dgen_trans = '1-Dgen', permutations = 9999)
+```
+
+Generate dataframe for plot using all individuals (labeling the southern cluster):
+
+```{r}
+## Generate long format dataframe for genetic distances
+dist_df_three_clusters <- as.data.frame(dist) 
+rownames(dist_df_three_clusters) <- pops_subset$Sample
+colnames(dist_df_three_clusters) <- pops_subset$Sample
+
+dist_long_three_clusters <- dist_df_three_clusters %>%
+  rownames_to_column(var = "Individual_1") %>%
+  pivot_longer(cols = -Individual_1,
+               names_to = "Individual_2",
+               values_to = "Gen_dist")
+
+
+## Generate long format dataframe for geographic distances
+geogDist_df_three_clusters <- as.data.frame(geogDist)
+
+
+geogdist_long_three_clusters <- geogDist_df_three_clusters %>%
+  rownames_to_column(var = "Individual_1") %>%
+  pivot_longer(cols = -Individual_1,
+               names_to = "Individual_2",
+               values_to = "Geog_dist")
+
+All_ind_df_three_clusters <- cbind(dist_long_three_clusters, geogdist_long_three_clusters$Geog_dist)
+
+rm(geogdist_long_three_clusters)
+
+All_ind_df_three_clusters <- All_ind_df_three_clusters %>%
+  rename("Geog_dist" = "geogdist_long_three_clusters$Geog_dist")
+
+
+
+## Add calling and non-calling labels to 
+genetic_clades_three_clusters <- pops_subset %>%
+  select(Sample, Three_clusters)
+
+All_ind_df_three_clusters <- All_ind_df_three_clusters %>%
+  left_join(genetic_clades_three_clusters, by=c("Individual_1" = "Sample")) %>%
+  rename("Ind1_gen_clade" = Three_clusters) %>%
+  left_join(genetic_clades_three_clusters, by=c("Individual_2" = "Sample")) %>%
+  rename("Ind2_gen_clade" = Three_clusters)
+
+
+## Add Type column
+All_ind_df_three_clusters <- All_ind_df_three_clusters %>%
+  mutate(Type = case_when(
+    Ind1_gen_clade == "Calling" & Ind2_gen_clade == "Calling" ~ "Calling vs Calling",
+    Ind1_gen_clade == "Non-calling" & Ind2_gen_clade == "Non-calling" ~ "Non-calling vs Non-calling",
+    Ind1_gen_clade == "CotC" & Ind2_gen_clade == "Non-calling" ~ "Non-calling vs CotC",
+    Ind1_gen_clade == "Non-calling" & Ind2_gen_clade == "CotC" ~ "Non-calling vs CotC",
+    Ind1_gen_clade == "CotC" & Ind2_gen_clade == "Calling" ~ "Calling vs CotC",
+    Ind1_gen_clade == "Calling" & Ind2_gen_clade == "CotC" ~ "Calling vs CotC",
+    Ind1_gen_clade == "CotC" & Ind2_gen_clade == "CotC" ~ "CotC vs CotC",
+    TRUE ~ "Calling vs Non-calling"
+  ))
+
+
+## Remove zeros (i.e. comparisons of the same site)
+All_ind_data_three_clusters <- All_ind_df_three_clusters[!(All_ind_df_three_clusters$Geog_dist==0.0 &
+                               All_ind_df_three_clusters$Gen_dist == 1.00000000), ]
+
+write.csv(All_ind_data_three_clusters, "C:/Users/jayna/OneDrive/Desktop/School/Lee_Yaw_Lab/Masters_Thesis/Data_chapter/RMD/IBD/Proportion_shared_alleles/All_ind_IBD_matrix_Southern_cluster_labelled.csv", row.names=FALSE)
+All_ind_data_three_clusters <- read.csv("C:/Users/jayna/OneDrive/Desktop/School/Lee_Yaw_Lab/Masters_Thesis/Data_chapter/RMD/IBD/Proportion_shared_alleles/All_ind_IBD_matrix_Southern_cluster_labelled.csv")
+```
+
+Make a new plot:
+```{r}
+## plot
+ibd_plot_three_clusters <- ggplot(All_ind_data_three_clusters, aes(x=Geog_dist, y=1 - Gen_dist, color = Type)) +
+  geom_point(size=1.8) +
+  scale_x_continuous(expand=c(0,0), limits=c(0, 1400), breaks=seq(0, 1400, by= 200)) +
+  
+  scale_color_manual(values = c("Calling vs Non-calling"= "#CAB2D6", "Calling vs Calling" = "#FDBF6F", "Non-calling vs Non-calling"= "#A6CEE3", "Calling vs CotC" = "#33A02C", "Non-calling vs CotC" = "#B2DF8A", "CotC vs CotC" = "#B15928")) +
+  
+  geom_abline(slope=0.00015, intercept=0.15, color = "black", lwd=0.75) +
+  geom_smooth(data = All_ind_df_wo_WLNP[All_ind_df_wo_WLNP$Type == "Calling vs Non-calling", ], method = "lm", se = FALSE, color = "#6A3D9A", lwd=0.75, linetype="dashed") +
+  geom_smooth(data = All_ind_df_wo_WLNP[All_ind_df_wo_WLNP$Type == "Calling vs Calling", ], method = "lm", se = FALSE, color = "#FF7F00", lwd=0.75, linetype="dashed") +
+  geom_smooth(data = All_ind_df_wo_WLNP[All_ind_df_wo_WLNP$Type == "Non-calling vs Non-calling", ], method = "lm", se = FALSE, color = "#1F78B4", lwd=0.75, linetype="dashed") +
+  
+   theme(legend.text = element_text(size = 14),
+        legend.title = element_text(size = 14),
+        axis.line = element_line(color="black"),
+        panel.background=element_rect(fill="white", color=NA),
+        axis.text.x = element_text(size=11),
+        axis.text.y = element_text(size= 11),
+        axis.title.x = element_text(margin=margin(t=17), size = 14),
+        axis.title.y = element_text (margin=margin(r=10), size=14)) +
+  labs(x="Geographic Distance (km)",
+       y="Genetic Distance 
+       (1 - Proportion shared alleles)")
+
+
+ibd_plot_three_clusters
+
+ggsave(plot=ibd_plot_three_clusters, "C:/Users/jayna/OneDrive/Desktop/School/Lee_Yaw_Lab/Masters_Thesis/Data_chapter/RMD/IBD/Proportion_shared_alleles/IBD_all_individuals_Three_clusters_imiss33_SNP95.jpeg", dpi=800, width=8, height=8)
+```
+
+### Conclusions 
+Three separate plots are made: 1) All points, 2) Removing the third genetic cluster, 3) color coding the third genetic cluster.
+
+
+<br>
+<br> 
+
+### Specific notes for the manuscript/thesis 
+Plot 2 and 3 will go into the main manuscript.
+
+<br>
+<br> 
+
+### References 
+
+

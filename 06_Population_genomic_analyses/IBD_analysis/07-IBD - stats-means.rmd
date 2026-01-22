@@ -1,0 +1,305 @@
+---
+title: "Isolation-by-distance: Significance of genetic distance comparisons"
+author: "Jayna Bergman"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Version of R used: `r getRversion()`
+<br> 
+
+## Project
+
+Western toad DUs Genomics. 
+<br> 
+<br>
+
+
+## Overview
+
+### **Goal(s):** 
+The goal of this script is to test for significance between the genetic differences when comparing calling vs non-calling to within each group
+<br>
+
+### **Details about files and pipeline:** 
+The input dataframe was generated in the previous IBD script (where Nei's genetic distance and geographic distances (m) was calculated between each pair of individuals). The dataframe does not include individuals from the "southern" population (i.e. no WLNP or Corbin individuals)
+
+<br>
+<br>
+
+## Setting up the R environment
+
+### Working directory: 
+
+```{r, message =FALSE}
+setwd("C:/Users/jayna/OneDrive/Desktop/School/Lee_Yaw_Lab/Masters_Thesis/Data_chapter/RMD")
+```
+
+### Libraries: 
+
+```{r, message=FALSE}
+# load libraries
+library(dplyr)
+library(knitr)
+library(ggplot2)
+library(tidyverse)
+library(tidyr)
+library(vcfR)
+library(adegenet)
+library(poppr)
+library(hierfstat)
+library(ape)
+library(ade4)
+library(dartR)
+library(geosphere)
+library(patchwork)
+```
+
+## **Step 1 of analysis:** 
+
+### Load and explore the data
+
+Load the matrix that was made in the script before:
+
+```{r}
+data <- read.csv("C:/Users/jayna/OneDrive/Desktop/School/Lee_Yaw_Lab/Masters_Thesis/Data_chapter/RMD/IBD/Proportion_shared_alleles/All_ind_IBD_matrix_wo_WLNP_PropSA.csv")
+```
+
+Look at the summary of the data:
+
+```{r}
+summary(data)
+```
+
+Subset and filter the data to get the columns for the dataframe:
+
+```{r}
+## Select columns to keep
+data_subset <- data %>%
+  select(Gen_dist, Geog_dist, Type)
+  
+## Subset for 150km between points - standardizing geographic distances  
+data_150km <- data_subset %>%
+  filter(Geog_dist <= 150)
+```
+
+## **Step 2 of analysis:** All points
+
+Run an ANOVA on the genetic distance and Type (for all points):
+
+```{r}
+## Run anova test
+Test <- aov(Gen_dist ~ Type, data = data_subset)
+
+Test
+
+data_results <- summary(Test)
+data_results
+
+## Save F and P values
+data_f_value <- data_results[[1]]$`F value`[1]
+data_p_value <- data_results[[1]]$`Pr(>F)`[1]
+```
+
+Determine the mean genetic distance of each comparison type:
+
+```{r}
+## group by type and calculate the mean of each type
+real_results <- data_subset %>%
+    group_by(Type) %>%
+    summarise(mean_gendist = mean(Gen_dist))%>% 
+    pivot_wider(names_from = Type, values_from = mean_gendist)
+
+real_results <- real_results %>%
+  mutate(diff_cvc_cvnc = `Calling vs Calling` - `Calling vs Non-calling`,
+         diff_nvn_cvnc = `Non-calling vs Non-calling` - `Calling vs Non-calling`)
+
+print(real_results)
+
+## Add additional columns from the ANOVA to the dataframe - name it "real data"
+real_results$F_value <- data_f_value
+real_results$P_value <- data_p_value
+real_results$Iteration <- "real data"
+```
+
+Make plot to show to real data points and the mean:
+
+```{r}
+## Saved with the mean point as one version and the boxplot as a second version
+
+A_plot <- ggplot(data_subset, aes(x = Type, y = 1-Gen_dist, col = Type)) +
+  geom_point(shape = 16, position = position_jitter(w=0.1, h=0)) + 
+  geom_boxplot(outlier.shape = NA, color = "black", fill = NA) +
+  #stat_summary(fun = mean, geom = "point", size=2.5, color = "black") +
+  scale_color_manual(values = c("Calling vs Non-calling"= "#CAB2D6", "Calling vs Calling" = "#FDBF6F", "Non-calling vs Non-calling"= "#A6CEE3")) +
+  labs(y = "1 - Proportion shared alleles", x = "Comparison Type") +
+  theme(legend.position = "none", 
+        axis.text.x = element_text(size=10),
+        axis.text.y = element_text(size= 10),
+        panel.background=element_rect(fill="white", color=NA),
+        panel.grid.major = element_blank(),
+        panel.grid.major.x = element_blank(),
+        axis.line = element_line(color="black"),
+        axis.ticks.x=element_blank(),
+        axis.title.x = element_text(margin=margin(t=17)),
+        axis.title.y = element_text (margin=margin(r=7), size=11)) 
+
+A_plot
+
+ggsave(plot=A_plot, "C:/Users/jayna/OneDrive/Desktop/School/Lee_Yaw_Lab/Masters_Thesis/Data_chapter/RMD/IBD/Proportion_shared_alleles/IBD_ANOVA_allpts_boxplot.jpeg", dpi=800, width=8, height=8)
+```
+
+
+Randomizing one of the columns then taking the average genetic distance of each comparison type:
+
+```{r}
+# Create empty list 
+results_list <- list()
+
+# Number of iterations
+n_iterations <- 1000
+
+for (i in 1:n_iterations) {
+  ## Randomize the type column
+  data_subset$Randomized_type <- sample(data_subset$Type)
+  
+  ## Run ANOVA
+  anova_result <- aov(Gen_dist ~ Randomized_type, data = data_subset)
+  anova_summary <- summary(anova_result)
+  
+  F_value <- anova_summary[[1]]$`F value`[1]
+  P_value <- anova_summary[[1]]$`Pr(>F)`[1]
+  
+  ## group by type and calculate the mean of each type
+  mean_results <- data_subset %>%
+    group_by(Randomized_type) %>%
+    summarise(mean_gendist = mean(Gen_dist)) %>%
+    pivot_wider(names_from = Randomized_type, values_from = mean_gendist)
+    
+  ## Calculate differences between the means
+  mean_results <- mean_results %>%
+  mutate(diff_cvc_cvnc = `Calling vs Calling` - `Calling vs Non-calling`,
+         diff_nvn_cvnc = `Non-calling vs Non-calling` - `Calling vs Non-calling`)
+  
+  ## Add additional columns to the new dataframe
+  mean_results$F_value <- F_value
+  mean_results$P_value <- P_value
+  mean_results$Iteration <- i
+ 
+  
+  ## Store results
+  results_list[[i]] <- mean_results
+  
+}
+
+head(results_list[100])
+
+## Combine the different iterations
+final_results <- do.call(rbind, results_list)
+
+## Add on the real results
+final_results <- rbind(final_results, real_results)
+
+write.csv(final_results, "C:/Users/jayna/OneDrive/Desktop/School/Lee_Yaw_Lab/Masters_Thesis/Data_chapter/RMD/IBD/ANOVA_mean_results_differences.csv")
+```
+
+Make a histogram distribution of the means and where the real data mean is:
+
+```{r}
+##### Plot for calling vs calling and calling vs non-calling 
+## Sub set data
+calling_calling <- final_results %>%
+  select(diff_cvc_cvnc, Iteration)
+
+## Setting the value to add the line of the "real data" point
+Real_data_C <- "real data"
+iteration_diffs_C <- calling_calling$diff_cvc_cvnc[calling_calling$Iteration == Real_data_C]
+
+
+plot_hist1 <- ggplot(calling_calling, aes(x=diff_cvc_cvnc)) +
+  geom_histogram(binwidth = 0.001, fill = "#CAB2D6", color = "black", alpha = 0.7) +
+  geom_segment(aes(x = iteration_diffs_C, xend = iteration_diffs_C, y = 0, yend = 75), color = "red", linetype = "dashed", size = 0.8) +
+  scale_y_continuous(expand = c(0,0), limits=c(0,75), breaks=seq(0, 75, by= 25)) +
+  labs(title = " ", x = "Difference between the mean genetic distances (c vs c and c vs nc)", y = "Frequency") +
+  theme(legend.position="none", 
+        axis.text.x = element_text(size=12),
+        axis.text.y = element_text(size= 12),
+        panel.background=element_rect(fill="white", color=NA),
+        panel.grid.major = element_blank(),
+        panel.grid.major.x = element_blank(),
+        axis.line = element_line(color="black"),
+        axis.ticks.x=element_blank(),
+        axis.title.x = element_text(margin=margin(t=17), size=14),
+        axis.title.y = element_text (margin=margin(r=7), size=14))
+
+
+plot_hist1
+
+ggsave(plot=plot_hist1, "C:/Users/jayna/OneDrive/Desktop/School/Lee_Yaw_Lab/Masters_Thesis/Data_chapter/RMD/IBD/calling_noncalling_mean_histogram_differences.jpeg", dpi=800, width=10, height=8)
+
+
+
+##### Plot for noncalling vs noncalling and calling vs noncalling
+
+## Subset data
+noncalling_noncalling <- final_results %>%
+  select(diff_nvn_cvnc, Iteration)
+
+## Setting the value to add the line of the "real data" point
+Real_data_NC <- "real data"
+iteration_diffs_NC <- noncalling_noncalling$diff_nvn_cvnc[noncalling_noncalling$Iteration == Real_data_NC]
+
+
+plot_hist2 <- ggplot(noncalling_noncalling, aes(x=diff_nvn_cvnc)) +
+  geom_histogram(binwidth = 0.001, fill = "#CAB2D6", color = "black", alpha = 0.7) +
+  geom_segment(aes(x = iteration_diffs_NC, xend = iteration_diffs_NC, y = 0, yend = 75), color = "red", linetype = "dashed", size = 0.8) +
+  scale_y_continuous(expand = c(0,0), limits=c(0,75), breaks=seq(0, 75, by= 25)) +
+  labs(title = " ", x = "Difference between the mean genetic distances (nc vs nc and c vs nc)", y = "Frequency") +
+  theme(legend.position="none", 
+        axis.text.x = element_text(size=12),
+        axis.text.y = element_text(size= 12),
+        panel.background=element_rect(fill="white", color=NA),
+        panel.grid.major = element_blank(),
+        panel.grid.major.x = element_blank(),
+        axis.line = element_line(color="black"),
+        axis.ticks.x=element_blank(),
+        axis.title.x = element_text(margin=margin(t=17), size=14),
+        axis.title.y = element_text (margin=margin(r=7), size=14))
+
+
+plot_hist2
+
+ggsave(plot=plot_hist2, "C:/Users/jayna/OneDrive/Desktop/School/Lee_Yaw_Lab/Masters_Thesis/Data_chapter/RMD/IBD/calling_calling_mean_histogram_differences.jpeg", dpi=800, width=10, height=8)
+```
+
+Make patchwork figure:
+```{r}
+Figure_allpts <- (plot_hist1) /
+  (plot_hist2) +
+  plot_annotation(tag_levels = 'A',
+                  tag_suffix = ")")
+
+Figure_allpts
+
+ggsave(plot=Figure_allpts, "C:/Users/jayna/OneDrive/Desktop/School/Lee_Yaw_Lab/Masters_Thesis/Data_chapter/RMD/IBD/All_points_mean_histogram_differences.jpeg", dpi=800, width=10, height=12)
+```
+
+### Conclusions 
+
+The differences between the means are statistically larger than expected by the null distribution.
+
+<br>
+<br> 
+
+### Specific notes for the manuscript/thesis 
+
+The first anova plot will go into the main manuscript and the histograms will go into the sup mat. 
+
+<br>
+<br> 
+
+### References 
