@@ -1,6 +1,6 @@
 ---
 title: "Maxent models"
-author: "Jayna Bergman"
+author: "NA"
 date: "`r Sys.Date()`"
 output: html_document
 ---
@@ -54,7 +54,7 @@ Columns in the input file:
 #### Working directory: 
 
 ```{r, message =FALSE}
-# setwd("C:/Users/jayna/OneDrive/Desktop/School/Lee_Yaw_Lab/Masters_Thesis/Data_chapter/RMD/Maxent")
+# setwd("")
 ```
   
 <br>  
@@ -436,7 +436,7 @@ save(noncalling_maxent, file = "./Data/models/noncalling/noncalling_maxent_tgb_b
 load("./Data/models/noncalling/noncalling_maxent_tgb_biasgrid-nohinge.RData")
 
 print(noncalling_maxent@html)
-#C:\\Users\\jayna\\AppData\\Local\\Temp\\RtmpeC4TFW/maxent/58100242475/maxent.html
+
 #save html as a pdf
 ```
 
@@ -687,3 +687,4 @@ plot(summed_binary)
 <br> 
 
 ### References 
+
