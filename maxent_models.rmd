@@ -1,0 +1,689 @@
+---
+title: "Maxent models"
+author: "Jayna Bergman"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Version of R used: `r getRversion()`
+<br> 
+
+### Project
+
+WETO DUs
+<br> 
+<br>
+
+### Overview
+
+<br>
+
+#### **Goal(s):**
+
+This script will preprocess all the data to run Maxent models for the 1) calling population and the 2) non-calling population and then project the models across the range in Alberta and BC.  
+
+<br>
+
+#### **Details about files and pipeline:** 
+<br>
+
+1) File information 
+
+<br>
+
+2) File contents 
+
+<blockquote style="font-size: 100%;">
+
+
+Columns in the input file: 
+
+
+</blockquote> 
+
+<br>
+<br>
+
+### Setting up the R environment
+<br>
+
+#### Working directory: 
+
+```{r, message =FALSE}
+# setwd("C:/Users/jayna/OneDrive/Desktop/School/Lee_Yaw_Lab/Masters_Thesis/Data_chapter/RMD/Maxent")
+```
+  
+<br>  
+
+#### Libraries: 
+
+```{r, message=FALSE}
+# load libraries
+library(dplyr)
+library(lubridate)
+library(knitr)
+library(sf)
+library(rgbif)
+library(tidyr)
+library(tidyverse)
+library(terra)
+library(usdm)
+library(corrplot)
+library(predicts)
+library(ENMeval)
+library(rJava)
+```
+  
+<br>  
+
+### Data and Analysis 
+
+<br>
+
+The following code will have things that only need to be ran once commented out (this was ran previously)
+
+<br>
+
+#### Step 1 of analysis: Reprojecting shapefiles
+ 
+Read in shapefiles and reproject the study extent shapefiles to the Albers equal area projection. 
+
+```{r}
+## Load shapefile and plot shape
+calling_shp <- st_read("./Data/Study_extents/pre_processing/WETO_calling_range_SDM-boundary.shp")
+plot(calling_shp)
+
+noncalling_shp <- st_read("./Data/Study_extents/pre_processing/WETO_noncalling_range.shp")
+plot(noncalling_shp)
+
+#AB_BC <- st_read("./Data/Study_extents/AB_BC_Boundary/AB_BC.shp")
+#plot(st_geometry(AB_BC))
+
+
+## Reproject to aea (only need to do this for the AB BC shp)
+#AB_BC_aea <- st_transform(AB_BC, crs="ESRI:102008")
+#AB_BC_aea
+#plot(st_geometry(AB_BC_aea))
+
+
+## Save shapefiles
+#st_write(calling_shp, "./Data/Study_extents/model_subsets/calling_extent.shp")
+#st_write(noncalling_shp, "./Data/Study_extents/model_subsets/noncalling_extent.shp")
+#st_write(AB_BC_aea, "./Data/Study_extents/model_subsets/AB_BC_aea.shp")
+
+## Read in AB BC boundary in aea projection
+AB_BC_aea <- st_read("./Data/Study_extents/model_subsets/AB_BC_aea.shp")
+```
+
+<br>
+
+#### Step 2 of analysis: Processing input localities from GBIF - only need to do the following (step 2) once
+
+1) Download input localities from GBIF (only need to do this once - Done on December 26, 2024)
+
+```{r}
+## Download western toad input localities from GBIF
+#gbif_data <- occ_data(scientificName = "Anaxyrus boreas", hasCoordinate = TRUE, limit=100000)
+#head(gbif_data)
+
+## Subset important columns from GBIF data 
+#subset_data <- gbif_data$data[, c("scientificName", "decimalLatitude", "decimalLongitude", "coordinateUncertaintyInMeters", "publishingCountry", "stateProvince", "year", "references", "gbifID")]
+
+## Write csv for non-filtered localities
+#write.csv(subset_data, file = "./Data/Input_localities/pre_processing/unfiltered_locs.csv", row.names=FALSE)
+```
+
+2) Filter localities 
+
+```{r}
+## Filter input localities for year and coordinate uncertainty 
+#filtered_data <- subset_data %>%
+# filter(!is.na(decimalLatitude)) %>%
+#  filter(!is.na(decimalLongitude)) %>%
+#  filter(!is.na(year)) %>% 
+#  filter(!is.na(coordinateUncertaintyInMeters)) %>%
+#  filter(year >= 1990) %>%
+#  filter(coordinateUncertaintyInMeters <= 1000)
+
+## removing exact duplicate records based on lat&long
+#filtered_data  <- filtered_data %>%
+#  distinct(decimalLongitude, decimalLatitude, .keep_all = TRUE)
+
+## write new csv for filtered input localities
+#write.csv(filtered_data, file = "./Data/Input_localities/pre_processing/filtered_locs.csv", row.names = FALSE)
+```
+
+3) Reproject to aea (and fix columns)
+
+```{r}
+## Create a special feature object out of the localities
+#filtered_data_sf <- st_as_sf(filtered_data, coords=c("decimalLongitude", "decimalLatitude"), crs=4326)
+
+## Transform the localities to aea projection
+#filtered_data_aea <- st_transform(filtered_data_sf, crs="ESRI:102008")
+
+## create new lat/long columns with aea coordinates
+#filtered_data_aea <- filtered_data_aea  %>%
+#  dplyr::mutate(Long_m = sf::st_coordinates(.)[,1],
+#                Lat_m = sf::st_coordinates(.)[,2])
+#plot(st_geometry(filtered_data_aea))
+
+## Edit columns
+#filtered_data_aea <- filtered_data_aea %>%
+#  st_drop_geometry()
+
+#filtered_data_aea <- as.data.frame(filtered_data_aea)
+
+# Add species name column
+#filtered_data_aea$Species_name <- "Western toad"
+
+## Add decimal lat/long columns back
+#final_filtered_data <- cbind(filtered_data_aea, filtered_data$decimalLatitude)
+#final_filtered_data <- cbind(final_filtered_data, filtered_data$decimalLongitude)
+
+#final_filtered_data <- final_filtered_data %>%
+#  rename(Longitude_WGS84 = "filtered_data$decimalLongitude") %>%
+#  rename(Latitude_WGS84 = "filtered_data$decimalLatitude")
+
+## Write filtered dataset 
+#write.csv(final_filtered_data, file = "./Data/Input_localities/pre_processing/filtered_locs_aea.csv", row.names = FALSE)
+```
+
+4) Subset to calling and non-calling ranges
+
+```{r}
+## Turn localities back into an sf object
+#final_locs_sf <- st_as_sf(final_filtered_data, coords = c("Long_m", "Lat_m"), crs = "ESRI:102008")
+
+
+## Subset into calling and non-calling (non-calling in Canada only)
+#calling_locs <- st_join(final_locs_sf, calling_shp, join = st_within, left = FALSE)
+#plot(st_geometry(calling_locs))
+
+#noncalling_locs <- st_join(final_locs_sf, noncalling_shp, join = st_within, left = FALSE)
+#plot(st_geometry(noncalling_locs))
+
+
+## Fix columns
+## recreate new lat/long columns with aea coordinates
+#calling_locs  <- calling_locs   %>%
+#  dplyr::mutate(Long_m = sf::st_coordinates(.)[,1],
+#                Lat_m = sf::st_coordinates(.)[,2])
+#plot(st_geometry(calling_locs ))
+
+#noncalling_locs  <- noncalling_locs   %>%
+#  dplyr::mutate(Long_m = sf::st_coordinates(.)[,1],
+#                Lat_m = sf::st_coordinates(.)[,2])
+#plot(st_geometry(noncalling_locs ))
+
+## Edit columns
+#calling_locs  <- calling_locs  %>%
+#  st_drop_geometry()
+
+#noncalling_locs  <- noncalling_locs  %>%
+#  st_drop_geometry()
+
+
+## write new csv
+#write.csv(calling_locs, file = "./Data/Input_localities/model_subsets/calling_locs.csv", row.names = FALSE)
+#write.csv(noncalling_locs, file = "./Data/Input_localities/model_subsets/noncalling_locs.csv", row.names = FALSE)
+```
+
+<br>
+
+#### Step 3 of analysis: Process rasters
+
+1) Reproject rasters - only do this once
+
+```{r}
+## create a names list of rasters withing a folder 
+#names_list <- gsub(pattern=".tif", replacement="", list.files("./Data/Rasters/pre_processing/Normal_1991_2020_bioclim/", pattern='.tif$', all.files=TRUE, full.names=FALSE))
+
+
+## Define the new crs (projection) - in this case North America Albers equal area conic 
+
+#crs <- "+proj=aea +lat_1=20 +lat_2=60 +lat_0=40 +lon_0=-96 +x_0=0 +y_0=0 +ellps=GRS80 +datum=NAD83 +units=m +no_defs"
+
+
+## loop to read in one raster at a time, reproject it to aea, and save a new raster file 
+
+#for(i in 1:length(names_list)){
+#  r <- rast(paste("./Data/Rasters/pre_processing/Normal_1991_2020_bioclim/",names_list[i],".tif", sep=""))
+#  r_aea <- terra::project(r, crs)
+#  writeRaster(r_aea, paste("./Data/Rasters/pre_processing/aea/",names_list[i],"_aea.tif", sep=""), overwrite=TRUE)
+#}
+```
+
+2) Crop to AB/BC Boundary
+
+```{r}
+## Create a list of the rasters and stack them
+#rast_list <- list.files("./Data/Rasters/pre_processing/aea", pattern='.tif$', all.files=TRUE, full.names=TRUE)
+#rast_list
+
+#rstack <- rast(rast_list)
+#plot(rstack[[10]])
+
+
+## Create a new list of the raster names in the file and properly name variables 
+#new_names_list <- gsub(pattern=".tif", replacement="", list.files("./Data/Rasters/pre_processing/aea", pattern='.tif$', all.files=TRUE, full.names=FALSE))
+
+#names(rstack) <- new_names_list
+
+
+## Crop to different extents
+#calling_r <- crop(rstack, calling_shp, mask=TRUE)
+#plot(calling_r[[1]])
+
+#noncalling_r <- crop(rstack, noncalling_shp, mask=TRUE)
+#plot(noncalling_r[[1]])
+
+#AB_BC_r <- crop(rstack, AB_BC_aea, mask=TRUE)
+#plot(AB_BC_r[[1]])
+
+
+## Save rasters
+#for (i in 1:nlyr(calling_r)) {
+#  layer <- calling_r[[i]]
+#  filename <- paste0("./Data/Rasters/calling_r/",names_list[i], ".tif")
+#  writeRaster(layer, filename, overwrite=TRUE)
+#}
+
+#for (i in 1:nlyr(noncalling_r)) {
+#  layer <- noncalling_r[[i]]
+#  filename <- paste0("./Data/Rasters/noncalling_r/",names_list[i], ".tif")
+#  writeRaster(layer, filename, overwrite=TRUE)
+#}
+
+
+#for (i in 1:nlyr(AB_BC_r)) {
+#  layer <- AB_BC_r[[i]]
+#  filename <- paste0("./Data/Rasters/AB_BC/",names_list[i], ".tif")
+#  writeRaster(layer, filename, overwrite=TRUE)
+#}
+```
+
+3) Run VIF values on AB/BC raster extents 
+
+```{r}
+## Look at VIF values for all environmental variables
+env_vif <- vif(AB_BC_r)
+
+
+## Picking variables based on step wise regression
+env_vif_step <- usdm::vifstep(AB_BC_r)
+env_step_results <- env_vif_step@results
+
+env_step_results
+```
+
+<br> 
+
+#### Step 4 of analysis: Generating Maxent models
+
+Using ENMeval to tune the SDMs for feature classes and regularization multiplier SDMs using:
+
+1) Data partitioning - Spatial Block
+2) Tuning - regularization multiplier and feature classes
+
+```{r}
+## Set shared arguments 
+tune.args <- list(fc = c("L", "LQ", "H", "LQH", "LQP", "LQT" , "LQHP", "LQPT", "LQHPT"), rm = seq(0.5, 4, by=0.5))
+
+basicargs <- c("-J","-P","writebackgroundpredictions","maximumiterations=5000")
+
+
+##### Calling model #####
+
+## Read in localities and specify proper format for input matrix
+calling_locs_df <- read.csv("./Data/Input_localities/model_subsets/calling_locs.csv")
+
+calling_locs_subset <- calling_locs_df %>%
+  select(Long_m, Lat_m)
+plot(calling_locs_subset)
+
+calling_bg <- read.csv("./Data/Input_localities/tbg/bg.bias_correction_calling.csv")
+plot(calling_bg)
+
+## Read in rasters
+model_rast_list <- list.files("./Data/Rasters/model_subsets/calling", pattern='.tif$', all.files=TRUE, full.names=TRUE)
+model_rast_list
+
+callingstack <- rast(model_rast_list)
+plot(callingstack[[8]]) 
+
+
+## Tuning step model
+calling_m <- ENMevaluate(occs = calling_locs_subset, bg = calling_bg, envs = callingstack, algorithm = "maxent.jar", partitions = "block", tune.args = tune.args)
+
+# Get model results
+calling_results <- eval.results(calling_m)
+
+# save results
+write.csv(calling_results, "./Data/models/calling/calling_tuning_results_tbg.csv", row.names = FALSE)
+
+# find lowest AICc
+calling_opt_args <- calling_results |> filter(delta.AICc == 0)
+head(calling_opt_args)
+
+
+## Generate model with specified arguments - need to manually set features and betamultiplier (i.e. regularization)
+#LQT, r=1.5
+
+calling_args <- c(basicargs, features = c("nohinge", "Threshold", "noproduct"), "betamultiplier=1.5")
+
+
+# Run model with predicts package
+calling_maxent <- MaxEnt(x=callingstack, p=calling_locs_subset, a=calling_bg, 
+                         removeDuplicates = TRUE, args = calling_args)
+
+# Save model
+save(calling_maxent, file = "./Data/models/calling/calling_maxent_tgb_biasgrid.RData")
+load("./Data/models/calling/calling_maxent_tgb_biasgrid.RData")
+
+print(calling_maxent@html)
+#C:\\Users\\jayna\\AppData\\Local\\Temp\\Rtmp2x6WHP/maxent/5781872691/maxent.html
+#save html as a pdf
+
+
+##### Non-calling model #####
+
+## Read in localities and specify proper format for input matrix
+noncalling_locs_df <- read.csv("./Data/Input_localities/model_subsets/noncalling_locs.csv")
+
+noncalling_locs_subset <- noncalling_locs_df %>%
+  select(Long_m, Lat_m)
+
+noncalling_bg <- read.csv("./Data/Input_localities/tbg/bg.bias_correction_noncalling.csv")
+
+
+## Read in rasters
+model_rast_list2 <- list.files("./Data/Rasters/model_subsets/noncalling", pattern='.tif$', all.files=TRUE, full.names=TRUE)
+model_rast_list2
+
+noncallingstack <- rast(model_rast_list2)
+plot(noncallingstack[[8]])
+
+
+## Tuning step model
+noncalling_m <- ENMevaluate(occs = noncalling_locs_subset, bg = noncalling_bg, envs = noncallingstack, algorithm = "maxent.jar", partitions = "block", tune.args = tune.args)
+
+# Get model results
+noncalling_results <- eval.results(noncalling_m)
+
+# Save results
+write.csv(noncalling_results, "./Data/models/noncalling/noncalling_tuning_results_tbg.csv", row.names = FALSE)
+
+# find lowest AICc
+noncalling_opt_args <- noncalling_results |> filter(delta.AICc == 0)
+noncalling_opt_args
+
+
+## Generate model with specified arguments - need to manually set features and betamultiplier (i.e. regularization)
+#LQHPT r=0.5
+noncalling_args <- c(basicargs, features = c("Threshold", "nohinge"), "betamultiplier=0.5")
+
+# Run model with predicts package
+noncalling_maxent <- MaxEnt(x=noncallingstack, p=noncalling_locs_subset, a=noncalling_bg, 
+                            removeDuplicates = FALSE, args = noncalling_args)
+
+# Save model
+save(noncalling_maxent, file = "./Data/models/noncalling/noncalling_maxent_tgb_biasgrid-nohinge.RData")
+load("./Data/models/noncalling/noncalling_maxent_tgb_biasgrid-nohinge.RData")
+
+print(noncalling_maxent@html)
+#C:\\Users\\jayna\\AppData\\Local\\Temp\\RtmpeC4TFW/maxent/58100242475/maxent.html
+#save html as a pdf
+```
+
+
+Make prediction surfaces (across AB and BC):
+```{r}
+## Read in rasters for AB and BC (study extent that the model is predicted to)
+AB_BC_list <- list.files("./Data/Rasters/model_subsets/AB_BC", pattern='.tif$', all.files=TRUE, full.names=TRUE)
+AB_BC_list
+
+AB_BC_stack <- rast(AB_BC_list)
+plot(AB_BC_stack[[8]]) 
+
+
+## Calling prediction surface
+calling_surface <- predicts::predict(AB_BC_stack, calling_maxent, type = "cloglog", na.rm=TRUE)
+
+#calling_surface2 <- predicts::predict(AB_BC_stack, calling_maxent, args = "outputformat=CLOGLOG", na.rm=TRUE)
+
+plot(calling_surface)
+
+# save prediction surface
+writeRaster(calling_surface, filename="./Data/models/calling/calling_prediction_surface_biasgrid.tif", overwrite = TRUE)
+
+calling_surface <- rast("./Data/models/calling/calling_prediction_surface_biasgrid.tif")
+
+
+## Noncalling prediction surface
+noncalling_surface <- predict(AB_BC_stack, noncalling_maxent, type = "cloglog", na.rm=TRUE)
+
+plot(noncalling_surface)
+
+# save prediction surface
+writeRaster(noncalling_surface, filename="./Data/models/noncalling/noncalling_prediction_surface_biasgrid.tif", overwrite=TRUE)
+
+noncalling_surface <- rast("./Data/models/noncalling/noncalling_prediction_surface_biasgrid.tif")
+```
+
+Make prediction surfaces with the mess analysis in order to mask out environmental space that is not represented by the localities that were used to generate the model. 
+
+```{r}
+## Read in input localities 
+calling_locs <- read.csv("./Data/Input_localities/model_subsets/calling_locs.csv")
+
+noncalling_locs <- read.csv("./Data/Input_localities/model_subsets/noncalling_locs.csv")
+
+
+## Read in background points
+calling_bg <- read.csv("./Data/Input_localities/tbg/bg.bias_correction_calling.csv")
+
+noncalling_bg <- read.csv("./Data/Input_localities/tbg/bg.bias_correction_noncalling.csv")
+
+
+## Select lats/longs and combine dataframes
+calling_locs <- calling_locs %>%
+  select(Long_m, Lat_m)
+
+noncalling_locs <- noncalling_locs %>%
+  select(Long_m, Lat_m)
+
+
+calling_data <- rbind(calling_locs, calling_bg)
+noncalling_data <- rbind(noncalling_locs, noncalling_bg)
+
+
+## Read in rasters from across where the model will be projected 
+model_rast_list <- list.files("./Data/Rasters/model_subsets/AB_BC", pattern='.tif$', all.files=TRUE, full.names=TRUE)
+model_rast_list
+
+## Stack rasters
+rstack <- rast(model_rast_list)
+plot(rstack[[8]]) 
+
+
+## Extract environmental values from under input localities
+calling_extracted <- terra::extract(rstack, calling_data[,c("Long_m", "Lat_m")])
+
+calling_extracted <- calling_extracted  %>%
+  select(-ID)
+
+
+noncalling_extracted <- terra::extract(rstack, noncalling_data[,c("Long_m", "Lat_m")])
+
+noncalling_extracted <- noncalling_extracted %>%
+  select(-ID)
+
+
+##### CALLING #####
+
+## Run mess analysis and save prediction raster 
+calling_mess <- predicts::mess(rstack, calling_extracted, full = FALSE, 
+                               overwrite = TRUE, 
+                               filename = "./Data/mess/calling_mess_data.tif")
+
+plot(calling_mess)
+
+
+## Set threshold for the MESS values
+threshold <- 0
+
+## create a binary mask with the threshold
+calling_mask <- calling_mess  >= threshold
+plot(calling_mask)
+
+
+## Make masked areas NA values
+calling_mask_NA <- ifel(calling_mask == 0, NA, calling_mask)
+plot(calling_mask_NA)
+
+
+## applying mess mask to the prediction surface
+calling_surface_mess <- mask(calling_surface, calling_mask_NA)
+plot(calling_surface_mess)
+
+
+## Save raster 
+writeRaster(calling_surface_mess, filename="./Data/mess/calling_surface_mess_mask_tgb_biasgrid.tif", overwrite=TRUE)
+
+
+##### NONCALLING #####
+
+## Run mess analysis and save prediction raster 
+noncalling_mess <- predicts::mess(rstack, noncalling_extracted, full = FALSE, 
+                               overwrite = TRUE, 
+                               filename = "./Data/mess/noncalling_mess_tgb.tif")
+
+plot(noncalling_mess)
+
+
+## Set threshold for the MESS values
+threshold <- 0
+
+## create a binary mask
+noncalling_mask <- noncalling_mess  >= threshold
+plot(noncalling_mask)
+
+
+## Make masked areas NA values
+noncalling_mask_NA <- ifel(noncalling_mask ==0, NA, noncalling_mask)
+plot(noncalling_mask_NA)
+
+
+## applying mess mask to prediction surface
+noncalling_surface_mess <- mask(noncalling_surface, noncalling_mask_NA)
+plot(noncalling_surface_mess)
+
+
+## Save raster 
+writeRaster(noncalling_surface_mess, filename="./Data/mess/noncalling_surface_mess_mask_tgb_biasgrid.tif", overwrite=TRUE)
+
+```
+
+
+Make binary prediction surfaces using the 10% omission threshold:
+```{r}
+## Read in input localities 
+calling_locs <- read.csv("./Data/Input_localities/model_subsets/calling_locs.csv")
+
+noncalling_locs <- read.csv("./Data/Input_localities/model_subsets/noncalling_locs.csv")
+
+
+## Read in prediction surfaces with the MESS analysis
+calling_MESS <- rast("./Data/mess/calling_surface_mess_mask_tgb_biasgrid.tif")
+plot(calling_MESS)
+
+noncalling_MESS <- rast("./Data/mess/noncalling_surface_mess_mask_tgb_biasgrid.tif")
+plot(noncalling_MESS)
+
+
+## Extract prediction values from under the input localities
+calling_predict_vals <- terra::extract(calling_MESS, calling_locs[,c("Long_m", "Lat_m")], ID=FALSE)
+
+noncalling_predict_vals <- terra::extract(noncalling_MESS, noncalling_locs[,c("Long_m", "Lat_m")], ID=FALSE)
+
+
+## bind predictions to the input locality dataframes
+calling_locs_predict_vals <- cbind(calling_locs, calling_predict_vals)
+calling_locs_predict_vals <- calling_locs_predict_vals %>%
+  rename(prediction_values = "lyr1")
+
+noncalling_locs_predict_vals <- cbind(noncalling_locs, noncalling_predict_vals)
+noncalling_locs_predict_vals <- noncalling_locs_predict_vals %>%
+  rename(prediction_values = "lyr1")
+
+
+## save extracted predictions
+write.csv(calling_locs_predict_vals, "./Data/Binary_surface/calling_locs_prediction_vals_biasgrid.csv", row.names = FALSE)
+write.csv(noncalling_locs_predict_vals, "./Data/Binary_surface/noncalling_locs_prediction_vals_biasgrid.csv",, row.names = FALSE)
+
+
+## Determine the quantile values of the prediction values for the input localities
+calling_quantiles <- quantile(calling_locs_predict_vals$prediction_values, probs = c(0, 0.05, 0.1, 0.25, 0.5, 0.75, 1), na.rm=TRUE)
+calling_quantiles_df <- as.data.frame(calling_quantiles)
+
+noncalling_quantiles <- quantile(noncalling_locs_predict_vals$prediction_values, probs = c(0, 0.05, 0.1, 0.25, 0.5, 0.75, 1), na.rm=TRUE)
+noncalling_quantiles_df <- as.data.frame(noncalling_quantiles)
+
+## combine calling and noncallling and save the csv
+quantiles <- cbind(noncalling_quantiles_df, calling_quantiles_df)
+write.csv(quantiles, "./Data/Binary_surface/quantilies_biasgrid.csv", row.names = FALSE)
+
+
+## Creating a binary prediction surface using the <=10th percentile as 0 and saving as new Raster
+## Calling
+calling_range_m <- c(0, calling_quantiles[[3]], 0, (calling_quantiles[[3]]+0.0000001), 1, 1) #Set thresholds
+
+calling_range_matrix <- matrix(calling_range_m, ncol = 3, byrow =TRUE)
+calling_range_matrix 
+
+calling_range_binary <- classify(calling_MESS, calling_range_matrix)
+plot(calling_range_binary)
+
+writeRaster(calling_range_binary, filename = "./Data/Binary_surface/calling_binary_surface_10percent_biasgrid.tif", overwrite=TRUE)
+
+
+## Non-calling
+noncalling_range_m <- c(0, noncalling_quantiles[[3]], 0, (noncalling_quantiles[[3]]+0.0000001), 1, 1) #Set thresholds
+
+noncalling_range_matrix <- matrix(noncalling_range_m, ncol = 3, byrow =TRUE)
+noncalling_range_matrix 
+
+
+noncalling_range_binary <- classify(noncalling_MESS, noncalling_range_matrix)
+plot(noncalling_range_binary)
+
+writeRaster(noncalling_range_binary, filename = "./Data/Binary_surface/noncalling_binary_surface_10percent_biasgrid.tif", overwrite = TRUE)
+
+
+summed_binary <- noncalling_range_binary + calling_range_binary
+plot(summed_binary)
+```
+
+### Conclusions 
+
+1) All input data (localities, study extents, and environmental variables) were processed and in AEA projection 
+2) A tuning step was conducted for the 1) calling population and the 2) noncalling population. 
+3) The best fit model was chosen for each population using the delta AICc
+4) Prediction surfaces for each population was generated across all of BC and Alberta (using the best fit models)
+5) MESS mask surfaces made
+6) Binary surfaces based on the 10% threshold made
+
+<br>
+<br> 
+
+### Specific notes for the manuscript/thesis 
+
+<br>
+<br> 
+
+### References 
